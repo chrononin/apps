@@ -1,0 +1,698 @@
+<!DOCTYPE html>
+<html xmlns="http://www.w3.org/1999/html">
+<head>
+    <meta name="viewport" content="width=device-width, initial-scale=1"/>
+    <link rel="stylesheet" href="font-awesome.min.css"/>
+    <link rel="stylesheet" href="clippy.css"/>
+    <Script>
+        //this script is to encrypt and decript the text
+        //forked from https://bradyjoslin.github.io/webcrypto-example/script.js
+
+        // for large strings, use this from https://stackoverflow.com/a/49124600
+        const buff_to_base64 = (buff) => btoa(
+        new Uint8Array(buff).reduce(
+            (data, byte) => data + String.fromCharCode(byte), ''
+        )
+        );
+
+        const base64_to_buf = (b64) =>
+        Uint8Array.from(atob(b64), (c) => c.charCodeAt(null));
+
+        const enc = new TextEncoder();
+        const dec = new TextDecoder();
+        const getPasswordKey = (password) =>
+        window.crypto.subtle.importKey("raw", enc.encode(password), "PBKDF2", false, [
+            "deriveKey",
+        ]);
+
+        const deriveKey = (passwordKey, salt, keyUsage) =>
+        window.crypto.subtle.deriveKey(
+            {
+            name: "PBKDF2",
+            salt: salt,
+            iterations: 250000,
+            hash: "SHA-256",
+            },
+            passwordKey,
+            { name: "AES-GCM", length: 256 },
+            false,
+            keyUsage
+        );
+
+        async function encryptData(secretData, password) {
+        try {
+            const salt = window.crypto.getRandomValues(new Uint8Array(16));
+            const iv = window.crypto.getRandomValues(new Uint8Array(12));
+            const passwordKey = await getPasswordKey(password);
+            const aesKey = await deriveKey(passwordKey, salt, ["encrypt"]);
+            const encryptedContent = await window.crypto.subtle.encrypt(
+            {
+                name: "AES-GCM",
+                iv: iv,
+            },
+            aesKey,
+            enc.encode(secretData)
+            );
+            
+            const encryptedContentArr = new Uint8Array(encryptedContent);
+            let buff = new Uint8Array(
+            salt.byteLength + iv.byteLength + encryptedContentArr.byteLength
+            );
+            buff.set(salt, 0);
+            buff.set(iv, salt.byteLength);
+            buff.set(encryptedContentArr, salt.byteLength + iv.byteLength);
+            const base64Buff = buff_to_base64(buff);
+            return base64Buff;
+        } catch (e) {
+            console.log(`Error - ${e}`);
+            return "";
+        }
+        }
+
+        async function decryptData(encryptedData, password) {
+        try {
+            const encryptedDataBuff = base64_to_buf(encryptedData);
+            const salt = encryptedDataBuff.slice(0, 16);
+            const iv = encryptedDataBuff.slice(16, 16 + 12);
+            const data = encryptedDataBuff.slice(16 + 12);
+            const passwordKey = await getPasswordKey(password);
+            const aesKey = await deriveKey(passwordKey, salt, ["decrypt"]);
+            const decryptedContent = await window.crypto.subtle.decrypt(
+            {
+                name: "AES-GCM",
+                iv: iv,
+            },
+            aesKey,
+            data
+            );
+            return dec.decode(decryptedContent);
+        } catch (e) {
+            console.log(`Error - ${e}`);
+            alert('wrong passsword or unprotected file!');
+            destroyModal();
+            return "";
+        }
+        }
+
+    </Script>
+</head>
+<body>
+<div>
+    <script type="text/javascript">
+        let fr;
+        let fileList;
+        let clipper;
+        let clippyTextFromImport;
+        const OWNER_NAME = "Owner";
+        const UPDATED_ON = "UpdatedOn";
+        const SAVED_LOADED_FILE = "savedOn";
+        const SECTION = "section";
+        const ROW  = "row";
+        const clipFileExtension = '.clippy';
+        let ownerNameTxt;
+        let updateTimeTxt;
+        let savedOnTxt;
+        let cell_index = 0;
+        let cell_type = "";
+        let cell_value = "";
+        let isImFilepassProtected = 0;
+        
+        /*if any local copy of clipper is available, load that first. */
+        window.addEventListener('load', function () {
+            if (typeof(Storage) !== "undefined") {
+                if(localStorage.getItem("isLocalCopyAvailable") === "TRUE"){
+                    clipper = JSON.parse(localStorage.getItem("localClippy"));
+                    ownerNameTxt = clipper.Owner;
+                    updateTimeTxt = clipper.UpdatedOn;
+                    savedOnTxt = clipper.savedFileName+clipFileExtension;
+                    updateClippyMeta();
+                    processClippy(clipper);
+                    addObserverIfDesiredNodeAvailable();
+                }else
+                {
+                    let initialize = "<div class='initialize'><button class='btn' onclick='addNewSection()'> <i class='fa fa-hourglass'></i> initialize clippy</button> </div>"
+                    document.getElementById("content").innerHTML = initialize;
+                }
+            }
+        });
+        // Sava and load Clippy from local Storage
+        function saveLocalCopy(timeUpdateRequired=true){
+            // Check browser support
+            if (typeof(Storage) !== "undefined") {
+                // Store
+                if(!clipper){
+                    console.log('Nothing to save')
+                }
+                if(timeUpdateRequired) {
+                    let d = new Date();
+                    updateTimeTxt = d.getDate() + '-' + d.getUTCMonth() + '-' + d.getFullYear() + ' ' + d.getHours() + ':' + d.getMinutes() + ':' + d.getSeconds();
+                    clipper.UpdatedOn = updateTimeTxt;
+                }
+                localStorage.setItem("localClippy", JSON.stringify(clipper));
+                localStorage.setItem("isLocalCopyAvailable","TRUE");
+                updateClippyMeta();
+                document.getElementById("saveLocal").setAttribute("disabled",'');
+            } else {
+                localStorage.setItem("isLocalCopyAvailable","FALSE");
+                console.log("Sorry, your browser does not support Web Storage...");
+            }
+        }
+        function clearClippy(){
+            if (typeof(Storage) !== "undefined") {
+                localStorage.removeItem("localClippy");
+                localStorage.setItem("isLocalCopyAvailable","FALSE");
+            }
+            //clipper = null;
+            document.getElementById("saveLocal").setAttribute("disabled","");
+            window.location.reload();
+            //renderClipboard();
+        }
+        async function exportClippy(i) {
+            if(!clipper){
+                console.log('Nothing to save');
+                alert('Nothing to export.');
+            }else{
+                if(i==1){
+                const password = window.prompt("Password");
+                const encryptedData = await encryptData(JSON.stringify(clipper), password);
+                downloadToFile(encryptedData, clipper.savedFileName, 'application/txt');
+                }
+                else
+                {
+                    downloadToFile(JSON.stringify(clipper), clipper.savedFileName, 'application/json');
+                }
+            }
+        }
+        
+        function importClippyModal(j) {
+            createModal();
+            isImFilepassProtected = j;
+            document.getElementById("modalHeaderSpan").innerHTML = "Import Clippy";
+            document.getElementById("modalIndex").innerText = '';
+            let importElement = document.createElement("importClippy");
+            importElement.innerHTML = "<label for='clippfile'> Please select your clippy: </label>"
+                + "<input type='file' name='clippyfile' id='clippyfile' accept='"+clipFileExtension+", .text'  onchange='clippyPreview(event)'/>"
+                + "<br/>"
+                + "<label for='appendClippy' id='appendClippyLabel'>append the imported clippy into the Clippy Board</label>"
+                + "<input type='checkbox' id='appendClippy' class='appendClippy' checked name='appendClippy'/>"
+            ;
+
+            document.getElementById("modalAddBtn").setAttribute('hidden', '');
+            document.getElementById("modalBody").appendChild(importElement);
+
+            document.getElementById("modalSaveBtn").setAttribute("onClick", "importClippy()");
+        }
+        function downloadToFile(data, filename, type) {
+            let file = new Blob([data], {type: type});
+            if (window.navigator.msSaveOrOpenBlob) // IE10+
+                window.navigator.msSaveOrOpenBlob(file, filename+'.'+type);
+            else { // Others
+                let a = document.createElement("a"),
+                    url = URL.createObjectURL(file);
+                a.href = url;
+                a.download = filename+clipFileExtension; //'.json';
+                document.body.appendChild(a);
+                a.click();
+                setTimeout(function() {
+                    document.body.removeChild(a);
+                    window.URL.revokeObjectURL(url);
+                }, 0);
+            }
+        }
+        function renderClipboard(mergeWithOldClipper) {
+            let eClipBoardNode = document.getElementById("clippyboard");
+            if (eClipBoardNode != null) {
+                eClipBoardNode.parentNode.removeChild(eClipBoardNode);
+            }
+            processClippy(clipper);
+        }
+        function importClippy(j) {
+            let timeUpdateRequired = false;
+            if(!clippyTextFromImport){
+                alert('Please select the file.')
+            }else {
+                console.log("is checked : " +document.getElementById("appendClippy").checked);
+                let appendMode = document.getElementById("appendClippy").checked
+                try{
+                    if(!clipper || !appendMode) {
+                        clipper = JSON.parse(clippyTextFromImport);
+                    }else{
+                        
+                        console.log(JSON.parse(clippyTextFromImport).clippy)
+                        let tmp = JSON.parse(clippyTextFromImport).clippy;
+                        
+                        tmp.forEach((t, i,) =>clipper.clippy.push(t))
+                        timeUpdateRequired = true;
+                        }
+                    }
+                    catch(error){
+                        alert('Not a valid formated json file!');
+                        destroyModal();
+                    }
+                ownerNameTxt = clipper.Owner;
+                updateTimeTxt = clipper.UpdatedOn;
+                savedOnTxt = clipper.savedFileName+clipFileExtension;
+                saveLocalCopy(timeUpdateRequired);
+                destroyModal();
+                clippyTextFromImport = null;
+                renderClipboard(appendMode);
+                console.log('import completed')
+                document.getElementById("saveLocal").setAttribute("disabled",""); // as the render operation regenerate the clipboard element.
+                console.log('exiting from import clippy')
+            }
+
+        }
+        function clippyPreview(event) {
+            console.log("clippyPreview called")
+            fr = new FileReader();
+            fr.onload = function () {
+                if (isImFilepassProtected ==1){
+                    const password = window.prompt("Password");
+                    const decryptedData = decryptData(fr.result, password);
+                    decryptedData.then(data =>{ clippyTextFromImport = data}); 
+                }else{
+                    clippyTextFromImport = fr.result;
+                }
+                
+            };
+            //fr.readAsText(this.files[0]);
+            fr.readAsText(event.target.files[0]);
+        }
+
+        let observer = new MutationObserver(function(mutations) {
+            document.getElementById("saveLocal").removeAttribute("disabled")
+            console.log("Hello There is change in the clippy");
+        });
+
+        function addObserverIfDesiredNodeAvailable() {
+            let content = document.getElementById("content");
+            if(!content) {
+                //The node we need does not exist yet.
+                //Wait 500ms and try again
+                window.setTimeout(addObserverIfDesiredNodeAvailable,500);
+                return;
+            }
+            let config = {childList: true};
+            observer.observe(content,config);
+        }
+        addObserverIfDesiredNodeAvailable();
+
+    </script>
+</div>
+<script>
+    let sectionData;
+    async function copyToClipBoard(idLabel) {
+        let copyText = document.getElementById(idLabel);
+        if (copyText.type === "password") {
+            copyText.type = "text";
+            copyText.select();
+            document.execCommand("copy");
+            console.log("Text Copied. " + copyText.value);
+            copyText.type = "password";
+        } else {
+            copyText.select();
+            document.execCommand("copy");
+            console.log("Text Copied. " + copyText.value);
+        }
+
+        let eSpan = document.getElementById("hoverCopied");
+        if (eSpan != null) eSpan.parentNode.removeChild(eSpan);
+
+        copyText.insertAdjacentHTML(
+            "afterend",
+            "<span id='hoverCopied' style='color:green'>copied!</span>"
+        );
+        await new Promise((r) => setTimeout(r, 2000));
+        console.log("time to clean");
+        eSpan = document.getElementById("hoverCopied");
+        eSpan.parentNode.removeChild(eSpan);
+    }
+
+    function deleteNode(nodeId) {
+        let node = document.getElementById(nodeId);
+        node.parentNode.removeChild(node);
+    }
+
+    function editNode(nodeId, type) {
+        console.log('nodeId', nodeId)
+        sectionData = clipper.clippy[nodeId.substring(nodeId.indexOf('tr')+2,nodeId.lastIndexOf('s'))].section;
+        createModal();
+        if (type == SECTION) {
+            document.getElementById("modalContent").classList.add("modal-section");
+            document.getElementById("modalHeaderSpan").innerHTML = "Modify Section Details";
+            document.getElementById("modalIndex").innerText = nodeId.substring(nodeId.indexOf('tr')+2,nodeId.lastIndexOf('s'));
+            let emi = document.createElement("input" );
+                emi.id ="ipSectionName";
+                emi.className = "ipSection"
+                emi.type ="text";
+                emi.value = sectionData.name;
+                emi.placeholder = "Please Type Section Name Here" ;
+            let emc = document.createElement("input" );
+                emc.id ="ipSectionComment";
+                emc.className = "ipSection"
+                emc.value = sectionData._comment;
+                emc.type ="text";
+                emc.placeholder = "Please Type Section Comment Here" ;
+
+            document.getElementById("modalAddBtn").setAttribute('hidden','');
+            document.getElementById("modalBody").appendChild(emi);
+            document.getElementById("modalBody").appendChild(emc);
+            document.getElementById("modalSaveBtn").setAttribute("onClick", "saveSection()");
+
+        } else if (type == ROW) {
+            document.getElementById("modalContent").classList.add("modal-row");
+            document.getElementById("modalHeaderSpan").innerHTML = "Modify Row Details ";
+            document.getElementById("modalIndex").innerText = nodeId.substring(nodeId.indexOf('tr')+2,nodeId.lastIndexOf('s')) +'-'+ nodeId.substring(nodeId.lastIndexOf('s')+1,nodeId.lastIndexOf('r'));
+            let rowData = sectionData.rows[nodeId.substring(nodeId.lastIndexOf('s')+1,nodeId.lastIndexOf('r'))].row;
+            let rowEditor ="<ol id='reOL' class='"+`${nodeId}`+"'> \n";
+            const selectMap = new Map();
+            rowData.forEach((cellData, index) =>{
+                let liId = 'reLi'+`${index}`;
+                rowEditor = rowEditor+
+                    "<li id='"+`${liId}`+"' class='reli'   ' draggable='true'>\n"+
+                    "<input class='ipCellValue' id='cv"+`${nodeId}${index}`+"c' type='text' placeholder='Please Type Cell Text' value='"+`${cellData.cell_value}`+"'/>\n" +
+                    "<select class='ipCellType' id='ct"+`${nodeId}${index}`+"c'>\n" +
+                    "  <option value=''>Select Cell Type</option>\n" +
+                    "  <option value='label'>Label</option>\n" +
+                    "  <option value='text'>Text</option>\n" +
+                    "  <option value='password'>Password</option>\n" +
+                    "  <option value='textarea'>Text Area</option>\n" +
+                    "</select>"+
+                    "<button class='cellDeleteBtn' onclick='deleteNode(\""+`${liId}`+"\")'><i class='fa fa-trash' style='color: darkred'></i> </button>" +
+                    "</li>\n"
+
+                ;
+                selectMap.set('ct'+`${nodeId}${index}`+'c', `${cellData.cell_type}`);
+            });
+            rowEditor = rowEditor + "</ol>";
+            let eModalBody = document.createElement('div');
+            eModalBody.innerHTML = rowEditor.trim();
+            document.getElementById("modalBody").appendChild(eModalBody);
+            for (const [key, value] of selectMap) {
+                document.getElementById(key).value = value;
+            }
+            selectMap.clear();
+        }
+        modal.style.display = "block";
+    }
+
+</script>
+<div id="clippyHeader" class="clippyHeader">
+    <div id="userBlock" class="user">Clippy</div>
+    <div id="clippyMeta" class="clippyMeta" >
+        <div class="metaRowOne">
+            <div>
+                <label class="labelHead" title="Double-Click on Owner name to edit.">Owner: </label>
+                <label id="ownerName" ondblclick="promptOwnerName()">User</label>
+            </div>
+            <div>
+                <label class="labelHead">Saved/Loaded from: </label>
+                <label id="savedOn" ondblclick="promptFileName()"></label>
+            </div>
+            <div>
+                <label class="labelHead">Updated on: </label>
+                <label id="updateTime"></label>
+            </div>
+        </div>
+        <div class="metaRowTwo">
+            <button class="btn" name="ImportClippy" id="importClippy" onclick="document.getElementById('ynpopupImport').style.display = 'block'; return false;" title="Please click on Import to load your saved file. "><i class="fa fa-file-import" > Import</i></button>
+            <button class="btn" name="UpdateLocal" disabled id="saveLocal" onclick="saveLocalCopy()" title="Please click on Save to save the changes. You can enable auto save. " ><i class="fa fa-save"> Save</i></button>
+            <button class="btn" name="ClearClippy" id="clearClippy" onclick="clearClippy()" title="Clicking this button will clear all the clipboard information. Please export if you wanna keep a copy of workspace" ><i class="fa fa-eraser" > Clear</i></button>
+            <button class="btn" name="ExportClippy" id="exportClippy" onclick="document.getElementById('ynpopupExport').style.display = 'block'; return false;" title="Please click Export to save the clipboard contents to file. "><i class="fa fa-file-export" > Export</i></button> 
+        </div>
+
+    </div>
+
+</div>
+<div id="clippyBoardBase">
+    <div id="content"></div>
+    <!-- The Modal -->
+    <div id="clippyModal" class="modal">
+        </div>
+        <script>
+            let modal = document.getElementById("clippyModal");
+            function createModal(){
+                let modal = document.getElementById("content");
+                modal.insertAdjacentHTML("afterend", "        <div id='modalContent' class='modal-content'>\n" +
+                    "            <div id='modalHeader' class='modal-header'>\n" +
+                    "                <span class='close' onclick='destroyModal()'>&times;</span>\n" +
+                    "                <h3 id='modalHeaderSpan'>Chirkut Modal Header</h3>\n" +
+                    "                <span id='modalIndex' class='modalIndex'>index</span>\n" +
+                    "            </div>\n" +
+                    "            <div id='modalBody' class='modal-body'>\n" +
+                    "            </div>\n" +
+                    "            <div id='modalFooter' class='modal-footer'>\n" +
+                    "                   <input type='button' id='modalAddBtn' class='modalAddBtn btn' value='Add' onclick='addNewCell()'>\n" +
+                    "                   <input type='button' id='modalSaveBtn' class='modalSaveBtn btn' value='Update' onclick='saveRow()'>\n" +
+                    "                   <input type='button' id='modalCancelBtn' class='modalCancelBtn btn' value='Cancel' onclick='destroyModal()'>\n"+
+                    "            </div>\n" +
+                    "        </div>"
+                    );
+            }
+            function  saveSection(){ // this is dynamically called from the secction Modal.
+                let i = document.getElementById("modalIndex").innerText;
+                clipper.clippy[i].section.name =  document.getElementById("ipSectionName").value;
+                clipper.clippy[i].section._comment =  document.getElementById("ipSectionComment").value;
+                destroyModal();
+                renderClipboard(false);
+                if(document.getElementsByClassName("modal-row").length>0) { // When New section created hat moment, row modal used to be in the hidden mode.
+                    document.getElementsByClassName("modal-row")[0].classList.remove("modal-display-none")
+                }
+            }
+            function addNewSection(nodeId) {
+                //let sIndex = 0
+                if(!nodeId){
+                    let d = new Date();
+                    clipper = {"Owner": "User",
+                        "UpdatedOn": d.getDate() + '-' + d.getUTCMonth() + '-' + d.getFullYear() + ' ' + d.getHours() + ':' + d.getMinutes() + ':' + d.getSeconds(),
+                        "savedFileName": "Clippy_"+d.getDate()+d.getMonth()+d.getFullYear()+d.getHours()+d.getMinutes()+d.getSeconds(),
+                        "clippy":[]
+                    }
+                }
+
+                console.log(JSON.stringify(clipper));
+                let sIndex = clipper.clippy.length;
+                let emptySection = {
+                    "section": {
+                        "_index": sIndex,
+                        "name": "",
+                        "_comment": "",
+                        "rows": []
+                    }
+                }
+                clipper.clippy.push(emptySection);
+                addNewRow('tr'+sIndex+'s');
+                document.getElementsByClassName("modal-row")[0].classList.add("modal-display-none")
+                editNode('tr'+sIndex+'s', SECTION);
+
+                //initialised the Meta
+                ownerNameTxt = clipper.Owner;
+                updateTimeTxt = clipper.UpdatedOn;
+                savedOnTxt = clipper.savedFileName+clipFileExtension;
+                updateClippyMeta();
+            }
+            function addNewRow(nodeId){
+                console.log('section ', clipper.clippy[nodeId.substring(nodeId.indexOf('tr')+2,nodeId.lastIndexOf('s'))])
+                let section = clipper.clippy[nodeId.substring(nodeId.indexOf('tr')+2,nodeId.lastIndexOf('s'))].section
+                //console.log(new Date(), section)
+                let iRow = section.rows.length;
+                let emptyRow = {
+                    "row_index": iRow,
+                    "row": [
+                        {
+                            "cell_index": 0,
+                            "cell_type": "label",
+                            "cell_value": "Please edit the row",
+                            "cell_readonly": true
+                        }
+                    ]
+                }
+                section.rows.push(emptyRow) ;
+                console.log(new Date(),section)
+                editNode(nodeId.substring(0,nodeId.lastIndexOf('s')+1)+iRow+'r', ROW)
+            }
+            function saveRow(){
+                console.log(document.getElementById("reOL").id)
+                let rowOL= document.getElementById("reOL").children;
+                let row = [];
+                for (let i = 0; i < rowOL.length; i++) {
+                    let cell = {
+                        "cell_index" : i,
+                        "cell_type"  : rowOL[i].getElementsByClassName("ipCellType")[0].value, //cell_type,
+                        "cell_value" : rowOL[i].getElementsByClassName("ipCellValue")[0].value //cell_value
+                    };
+                    row.push(cell);
+                }
+                //prepare the json - row
+                // update aka replace the row on the clipper
+                let nodeId = document.getElementById("reOL").getAttribute("class");
+                let section = clipper.clippy[nodeId.substring(nodeId.indexOf('tr')+2,nodeId.lastIndexOf('s'))].section
+                    section.rows[nodeId.substring(nodeId.lastIndexOf('s')+1,nodeId.lastIndexOf('r'))].row = row;
+                destroyModal();
+                renderClipboard(false);
+            }
+            function addNewCell(){
+                let newCelLEdit =
+
+                    "<input class='ipCellValue' id='cnc' type='text' placeholder='Please Type Cell Text' />\n" +
+                    "<select class='ipCellType' id='ctc'>\n" +
+                    "  <option value='text'>Select Cell Type</option>\n" +
+                    "  <option value='label'>Label</option>\n" +
+                    "  <option value='text'>Text</option>\n" +
+                    "  <option value='password'>Password</option>\n" +
+                    "  <option value='textarea'>Text Area</option>\n" +
+                    "</select>"+
+                    "<button class='cellDeleteBtn' onclick='deleteNode(\"reli"+document.getElementById('reOL').childElementCount+"\")'><i class='fa fa-trash' style='color: darkred'></i></button>" ;
+
+                let eRowOL = document.createElement('li');
+                eRowOL.setAttribute("id", "reli"+document.getElementById("reOL").childElementCount);
+                eRowOL.setAttribute("class", "reli");
+                eRowOL.setAttribute("draggable", "true");
+                eRowOL.innerHTML = newCelLEdit.trim();
+                document.getElementById("reOL").appendChild(eRowOL);
+
+            }
+            function destroyModal(){
+                console.log("destroy modal invoked");
+                let eModal = document.getElementById("modalContent");
+                if (eModal != null) eModal.parentNode.removeChild(eModal);
+                modal.style.display = "none";
+            }
+
+            // When the user clicks anywhere outside of the modal, close it
+            window.onclick = function(event) {
+                if (event.target == modal) {
+                    modal.style.display = "none";
+                }
+            }
+        </script>
+    </div>
+    <script>
+        function promptOwnerName(){
+            if(clipper != null){
+                let oName = prompt("Please update the Owner: ", ownerNameTxt !=null ? ownerNameTxt : '');
+                ownerNameTxt = oName.trim()
+                clipper.Owner = String(oName);
+                updateClippyMeta();
+            }else {
+                alert('Please initialized the clippy first.')
+            }
+        }
+        
+        function promptFileName(){
+            if(clipper != null){
+                let fName = prompt("Please update the file name: ", savedOnTxt !=null ? savedOnTxt : '');
+                savedOnTxt = fName.trim();
+                clipper.savedFileName = String(savedOnTxt);
+                updateClippyMeta();
+            }else {
+                alert('Please initialized the clippy first.')
+            }
+        }
+        function updateClippyMeta(){
+            //update of owner name
+            let _ownerName = document.getElementById("ownerName");
+            _ownerName.innerText = ownerNameTxt;
+            let _savedOn = document.getElementById("savedOn");
+            if(savedOnTxt != 'undefined'){
+                _savedOn.innerText = savedOnTxt;
+            }
+            let _updateTime = document.getElementById("updateTime");
+            _updateTime.innerText = updateTimeTxt;
+
+        }
+        function processClippy(jsonText) {
+            let clippContent = `<div id="clippyboard">`;
+            jsonText.clippy.forEach((clip) => {
+                //Sections
+                clippContent = `${clippContent} ${processSection(clip.section)} `;
+            });
+            clippContent = `${clippContent} </div>`;
+            let eContent = document.getElementById("content");
+            eContent.innerHTML = `${clippContent}`;
+        }
+
+        function processSection(cSection) {
+            let nodeSection =
+        `<div class="section" id="tr${cSection._index}s">
+            <div class="tRow tRowHeader" id="tr${cSection._index}s" >
+                  <div class="tCell">
+                    <span class="menu"></span>
+                    <span class="actions">
+                      <a aria-hidden="true" style="color:green" class="fa fa-plus-circle" onclick="addNewSection('tr${cSection._index}s','section')"></a>
+                      <a aria-hidden="true" style="color:brown" class="fa fa-trash" onclick="deleteNode('tr${cSection._index}s')"></a>
+                      <a aria-hidden="true" style="color:navy" class="fa fa-edit" onclick="editNode('tr${cSection._index}s','section')"></a>
+                    </span>
+                  </div>
+              <div class="tCell tCellHeader">
+                <span>${cSection.name}</span>
+              </div>
+            </div>`;
+            let nodeRow;
+            cSection.rows.forEach((cRow, rowIndex) => {
+                // process Row
+                nodeRow = `<div class="tRow" id="tr${cSection._index}s${cRow.row_index}r" >
+                  <div class="tCell">
+                    <span class="menu"></span>
+                    <span class="actions"> 
+                      <a aria-hidden="true" style="color:green" class="fa fa-plus-circle" onclick="addNewRow('tr${cSection._index}s${cRow.row_index}r','row')"></a>
+                      <a aria-hidden="true" style="color:brown" class="fa fa-trash" onclick="deleteNode('tr${cSection._index}s${cRow.row_index}r')"></a>
+                      <a aria-hidden="true" style="color:navy" class="fa fa-edit" onclick="editNode('tr${cSection._index}s${cRow.row_index}r','row')"></a>
+                    </span>
+                  </div>`;
+                cRow.row.forEach((cCell, index) => {
+                    nodeRow = `${nodeRow}   ${processClippyNode(
+                        cCell,
+                        cSection._index+'s'+cRow.row_index+'r',
+                        index
+                    )}`;
+                });
+                nodeSection = `${nodeSection}  ${nodeRow} </div> <!-- end of row --> `;
+            });
+            return (nodeSection = `${nodeSection} </div>`);
+        };
+
+            function processClippyNode(item, rindex, i) {
+                let cellNode ;
+                if (item.cell_type == 'label') {
+                    cellNode = `<label id="r${rindex}c${item.cell_index}" onClick="copyToClipBoard('r${rindex}c${item.cell_index}')";>${item.cell_value}</label>`;
+                }else if(item.cell_type == 'textarea') {
+                    cellNode =` <textarea id="r${rindex}c${item.cell_index}" onClick="copyToClipBoard('r${rindex}c${item.cell_index}')"; rows="1">${item.cell_value}</textarea>`;
+                } else {
+                    cellNode = `<input id="r${rindex}c${item.cell_index}" onClick="copyToClipBoard('r${rindex}c${item.cell_index}')"; value="${item.cell_value}"  type="${item.cell_type}"  readonly/>`;
+                }
+                return  `<div class="tCell"> ${cellNode} </div>`;
+            }
+    </script>
+    <div id="ynpopupExport">
+        <p>Do you want to export as password protected file?</p>
+        <p><button class="btn">
+                <a onclick="exportClippy(1); document.getElementById('ynpopupExport').style.display = 'none';">
+                    Yes
+                </a>
+            </button>
+            <button class="btn">
+                <a onclick="exportClippy(0); document.getElementById('ynpopupExport').style.display = 'none';">
+                    No
+                </a>
+            </button>
+        </p>
+    </div>
+    <div id="ynpopupImport">
+        <p>Do you want to export as password protected file?</p>
+        <p><button class="btn">
+                <a onclick="importClippyModal(1); document.getElementById('ynpopupImport').style.display = 'none';">
+                    Yes
+                </a>
+            </button>
+            <button class="btn">
+                <a onclick="importClippyModal(0); document.getElementById('ynpopupImport').style.display = 'none';">
+                    No
+                </a>
+            </button>
+        </p>
+    </div>
+
+</div>
+</body>
+</html>
