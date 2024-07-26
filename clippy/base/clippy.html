@@ -4,6 +4,97 @@
     <meta name="viewport" content="width=device-width, initial-scale=1"/>
     <link rel="stylesheet" href="font-awesome.min.css"/>
     <link rel="stylesheet" href="clippy.css"/>
+    <Script>
+        //this script is to encrypt and decript the text
+        //forked from https://bradyjoslin.github.io/webcrypto-example/script.js
+
+        // for large strings, use this from https://stackoverflow.com/a/49124600
+        const buff_to_base64 = (buff) => btoa(
+        new Uint8Array(buff).reduce(
+            (data, byte) => data + String.fromCharCode(byte), ''
+        )
+        );
+
+        const base64_to_buf = (b64) =>
+        Uint8Array.from(atob(b64), (c) => c.charCodeAt(null));
+
+        const enc = new TextEncoder();
+        const dec = new TextDecoder();
+        const getPasswordKey = (password) =>
+        window.crypto.subtle.importKey("raw", enc.encode(password), "PBKDF2", false, [
+            "deriveKey",
+        ]);
+
+        const deriveKey = (passwordKey, salt, keyUsage) =>
+        window.crypto.subtle.deriveKey(
+            {
+            name: "PBKDF2",
+            salt: salt,
+            iterations: 250000,
+            hash: "SHA-256",
+            },
+            passwordKey,
+            { name: "AES-GCM", length: 256 },
+            false,
+            keyUsage
+        );
+
+        async function encryptData(secretData, password) {
+        try {
+            const salt = window.crypto.getRandomValues(new Uint8Array(16));
+            const iv = window.crypto.getRandomValues(new Uint8Array(12));
+            const passwordKey = await getPasswordKey(password);
+            const aesKey = await deriveKey(passwordKey, salt, ["encrypt"]);
+            const encryptedContent = await window.crypto.subtle.encrypt(
+            {
+                name: "AES-GCM",
+                iv: iv,
+            },
+            aesKey,
+            enc.encode(secretData)
+            );
+            
+            const encryptedContentArr = new Uint8Array(encryptedContent);
+            let buff = new Uint8Array(
+            salt.byteLength + iv.byteLength + encryptedContentArr.byteLength
+            );
+            buff.set(salt, 0);
+            buff.set(iv, salt.byteLength);
+            buff.set(encryptedContentArr, salt.byteLength + iv.byteLength);
+            const base64Buff = buff_to_base64(buff);
+            return base64Buff;
+        } catch (e) {
+            console.log(`Error - ${e}`);
+            return "";
+        }
+        }
+
+        async function decryptData(encryptedData, password) {
+        try {
+            const encryptedDataBuff = base64_to_buf(encryptedData);
+            const salt = encryptedDataBuff.slice(0, 16);
+            const iv = encryptedDataBuff.slice(16, 16 + 12);
+            const data = encryptedDataBuff.slice(16 + 12);
+            const passwordKey = await getPasswordKey(password);
+            const aesKey = await deriveKey(passwordKey, salt, ["decrypt"]);
+            const decryptedContent = await window.crypto.subtle.decrypt(
+            {
+                name: "AES-GCM",
+                iv: iv,
+            },
+            aesKey,
+            data
+            );
+            return dec.decode(decryptedContent);
+        } catch (e) {
+            console.log(`Error - ${e}`);
+            alert('wrong passsword or unprotected file!');
+            destroyModal();
+            return "";
+        }
+        }
+
+    </Script>
 </head>
 <body>
 <div>
@@ -17,13 +108,15 @@
         const SAVED_LOADED_FILE = "savedOn";
         const SECTION = "section";
         const ROW  = "row";
+        const clipFileExtension = '.clippy';
         let ownerNameTxt;
         let updateTimeTxt;
         let savedOnTxt;
         let cell_index = 0;
         let cell_type = "";
         let cell_value = "";
-
+        let isImFilepassProtected = 0;
+        
         /*if any local copy of clipper is available, load that first. */
         window.addEventListener('load', function () {
             if (typeof(Storage) !== "undefined") {
@@ -31,7 +124,7 @@
                     clipper = JSON.parse(localStorage.getItem("localClippy"));
                     ownerNameTxt = clipper.Owner;
                     updateTimeTxt = clipper.UpdatedOn;
-                    savedOnTxt = clipper.savedFileName+'.json';
+                    savedOnTxt = clipper.savedFileName+clipFileExtension;
                     updateClippyMeta();
                     processClippy(clipper);
                     addObserverIfDesiredNodeAvailable();
@@ -74,21 +167,31 @@
             window.location.reload();
             //renderClipboard();
         }
-        function exportClippy() {
+        async function exportClippy(i) {
             if(!clipper){
                 console.log('Nothing to save');
                 alert('Nothing to export.');
             }else{
-                downloadToFile(JSON.stringify(clipper), clipper.savedFileName, 'application/json');
+                if(i==1){
+                const password = window.prompt("Password");
+                const encryptedData = await encryptData(JSON.stringify(clipper), password);
+                downloadToFile(encryptedData, clipper.savedFileName, 'application/txt');
+                }
+                else
+                {
+                    downloadToFile(JSON.stringify(clipper), clipper.savedFileName, 'application/json');
+                }
             }
         }
-        function importClippyModal() {
+        
+        function importClippyModal(j) {
             createModal();
+            isImFilepassProtected = j;
             document.getElementById("modalHeaderSpan").innerHTML = "Import Clippy";
             document.getElementById("modalIndex").innerText = '';
             let importElement = document.createElement("importClippy");
             importElement.innerHTML = "<label for='clippfile'> Please select your clippy: </label>"
-                + "<input type='file' name='clippyfile' id='clippyfile' accept='.json, .text'  onchange='clippyPreview(event)'/>"
+                + "<input type='file' name='clippyfile' id='clippyfile' accept='"+clipFileExtension+", .text'  onchange='clippyPreview(event)'/>"
                 + "<br/>"
                 + "<label for='appendClippy' id='appendClippyLabel'>append the imported clippy into the Clippy Board</label>"
                 + "<input type='checkbox' id='appendClippy' class='appendClippy' checked name='appendClippy'/>"
@@ -102,12 +205,12 @@
         function downloadToFile(data, filename, type) {
             let file = new Blob([data], {type: type});
             if (window.navigator.msSaveOrOpenBlob) // IE10+
-                window.navigator.msSaveOrOpenBlob(file, filename);
+                window.navigator.msSaveOrOpenBlob(file, filename+'.'+type);
             else { // Others
                 let a = document.createElement("a"),
                     url = URL.createObjectURL(file);
                 a.href = url;
-                a.download = filename;
+                a.download = filename+clipFileExtension; //'.json';
                 document.body.appendChild(a);
                 a.click();
                 setTimeout(function() {
@@ -123,24 +226,32 @@
             }
             processClippy(clipper);
         }
-        function importClippy() {
+        function importClippy(j) {
             let timeUpdateRequired = false;
             if(!clippyTextFromImport){
                 alert('Please select the file.')
             }else {
                 console.log("is checked : " +document.getElementById("appendClippy").checked);
                 let appendMode = document.getElementById("appendClippy").checked
-                if(!clipper || !appendMode) {
-                    clipper = JSON.parse(clippyTextFromImport);
-                }else{
-                    console.log(JSON.parse(clippyTextFromImport).clippy)
-                    let tmp = JSON.parse(clippyTextFromImport).clippy;
-                    tmp.forEach((t, i,) =>clipper.clippy.push(t))
-                    timeUpdateRequired = true;
-                 }
+                try{
+                    if(!clipper || !appendMode) {
+                        clipper = JSON.parse(clippyTextFromImport);
+                    }else{
+                        
+                        console.log(JSON.parse(clippyTextFromImport).clippy)
+                        let tmp = JSON.parse(clippyTextFromImport).clippy;
+                        
+                        tmp.forEach((t, i,) =>clipper.clippy.push(t))
+                        timeUpdateRequired = true;
+                        }
+                    }
+                    catch(error){
+                        alert('Not a valid formated json file!');
+                        destroyModal();
+                    }
                 ownerNameTxt = clipper.Owner;
                 updateTimeTxt = clipper.UpdatedOn;
-                savedOnTxt = clipper.savedFileName+'.json';
+                savedOnTxt = clipper.savedFileName+clipFileExtension;
                 saveLocalCopy(timeUpdateRequired);
                 destroyModal();
                 clippyTextFromImport = null;
@@ -155,7 +266,14 @@
             console.log("clippyPreview called")
             fr = new FileReader();
             fr.onload = function () {
-                clippyTextFromImport = fr.result;
+                if (isImFilepassProtected ==1){
+                    const password = window.prompt("Password");
+                    const decryptedData = decryptData(fr.result, password);
+                    decryptedData.then(data =>{ clippyTextFromImport = data}); 
+                }else{
+                    clippyTextFromImport = fr.result;
+                }
+                
             };
             //fr.readAsText(this.files[0]);
             fr.readAsText(event.target.files[0]);
@@ -178,6 +296,7 @@
             observer.observe(content,config);
         }
         addObserverIfDesiredNodeAvailable();
+
     </script>
 </div>
 <script>
@@ -288,7 +407,7 @@
             </div>
             <div>
                 <label class="labelHead">Saved/Loaded from: </label>
-                <label id="savedOn"></label>
+                <label id="savedOn" ondblclick="promptFileName()"></label>
             </div>
             <div>
                 <label class="labelHead">Updated on: </label>
@@ -296,10 +415,10 @@
             </div>
         </div>
         <div class="metaRowTwo">
-            <button class="btn" name="ImportClippy" id="importClippy" onclick="importClippyModal()" title="Please click on Import to load your saved file. "><i class="fa fa-file-import" > Import</i></button>
+            <button class="btn" name="ImportClippy" id="importClippy" onclick="document.getElementById('ynpopupImport').style.display = 'block'; return false;" title="Please click on Import to load your saved file. "><i class="fa fa-file-import" > Import</i></button>
             <button class="btn" name="UpdateLocal" disabled id="saveLocal" onclick="saveLocalCopy()" title="Please click on Save to save the changes. You can enable auto save. " ><i class="fa fa-save"> Save</i></button>
             <button class="btn" name="ClearClippy" id="clearClippy" onclick="clearClippy()" title="Clicking this button will clear all the clipboard information. Please export if you wanna keep a copy of workspace" ><i class="fa fa-eraser" > Clear</i></button>
-            <button class="btn" name="ExportClippy" id="exportClippy" onclick="exportClippy()" title="Please click Export to save the clipboard contents to file. "><i class="fa fa-file-export" > Export</i></button>
+            <button class="btn" name="ExportClippy" id="exportClippy" onclick="document.getElementById('ynpopupExport').style.display = 'block'; return false;" title="Please click Export to save the clipboard contents to file. "><i class="fa fa-file-export" > Export</i></button> 
         </div>
 
     </div>
@@ -369,7 +488,7 @@
                 //initialised the Meta
                 ownerNameTxt = clipper.Owner;
                 updateTimeTxt = clipper.UpdatedOn;
-                savedOnTxt = clipper.savedFileName+'.json';
+                savedOnTxt = clipper.savedFileName+clipFileExtension;
                 updateClippyMeta();
             }
             function addNewRow(nodeId){
@@ -459,7 +578,19 @@
                 alert('Please initialized the clippy first.')
             }
         }
+        
+        function promptFileName(){
+            if(clipper != null){
+                let fName = prompt("Please update the file name: ", savedOnTxt !=null ? savedOnTxt : '');
+                savedOnTxt = fName.trim();
+                clipper.savedFileName = String(savedOnTxt);
+                updateClippyMeta();
+            }else {
+                alert('Please initialized the clippy first.')
+            }
+        }
         function updateClippyMeta(){
+            //update of owner name
             let _ownerName = document.getElementById("ownerName");
             _ownerName.innerText = ownerNameTxt;
             let _savedOn = document.getElementById("savedOn");
@@ -468,6 +599,7 @@
             }
             let _updateTime = document.getElementById("updateTime");
             _updateTime.innerText = updateTimeTxt;
+
         }
         function processClippy(jsonText) {
             let clippContent = `<div id="clippyboard">`;
@@ -532,6 +664,35 @@
                 return  `<div class="tCell"> ${cellNode} </div>`;
             }
     </script>
+    <div id="ynpopupExport">
+        <p>Do you want to export as password protected file?</p>
+        <p><button class="btn">
+                <a onclick="exportClippy(1); document.getElementById('ynpopupExport').style.display = 'none';">
+                    Yes
+                </a>
+            </button>
+            <button class="btn">
+                <a onclick="exportClippy(0); document.getElementById('ynpopupExport').style.display = 'none';">
+                    No
+                </a>
+            </button>
+        </p>
+    </div>
+    <div id="ynpopupImport">
+        <p>Do you want to export as password protected file?</p>
+        <p><button class="btn">
+                <a onclick="importClippyModal(1); document.getElementById('ynpopupImport').style.display = 'none';">
+                    Yes
+                </a>
+            </button>
+            <button class="btn">
+                <a onclick="importClippyModal(0); document.getElementById('ynpopupImport').style.display = 'none';">
+                    No
+                </a>
+            </button>
+        </p>
+    </div>
+
 </div>
 </body>
 </html>
