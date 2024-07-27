@@ -340,7 +340,7 @@ clippyboard {
     border: 1px solid dodgerblue;
 }
 
-#ynpopupImport, #ynpopupExport
+#ynpopupImport, #ynpopupExport, #passwordpop, #metapop, #alertpop
 {
     position:absolute;
     display:none;
@@ -351,4 +351,7 @@ clippyboard {
     border:1px solid dodgerblue; 
     padding:20px;
     background-color:white;
+    z-index:20;
+    text-align: -webkit-center;
 }
+
