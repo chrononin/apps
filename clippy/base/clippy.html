@@ -88,8 +88,8 @@
             return dec.decode(decryptedContent);
         } catch (e) {
             console.log(`Error - ${e}`);
-            alert('wrong passsword or unprotected file!');
-            destroyModal();
+            displayAlertPop('wrong passsword or unprotected file!');
+			destroyModal();
             return "";
         }
         }
@@ -97,7 +97,7 @@
     </Script>
 </head>
 <body>
-<div>
+<div id='clippymaiin'>
     <script type="text/javascript">
         let fr;
         let fileList;
@@ -116,6 +116,7 @@
         let cell_type = "";
         let cell_value = "";
         let isImFilepassProtected = 0;
+		let password;	   
         
         /*if any local copy of clipper is available, load that first. */
         window.addEventListener('load', function () {
@@ -124,7 +125,7 @@
                     clipper = JSON.parse(localStorage.getItem("localClippy"));
                     ownerNameTxt = clipper.Owner;
                     updateTimeTxt = clipper.UpdatedOn;
-                    savedOnTxt = clipper.savedFileName+clipFileExtension;
+                    savedOnTxt = clipper.savedFileName ;//.replace(clipFileExtension,'')+clipFileExtension;
                     updateClippyMeta();
                     processClippy(clipper);
                     addObserverIfDesiredNodeAvailable();
@@ -170,10 +171,11 @@
         async function exportClippy(i) {
             if(!clipper){
                 console.log('Nothing to save');
-                alert('Nothing to export.');
+                displayAlertPop('Nothing to export.');
             }else{
                 if(i==1){
-                const password = window.prompt("Password");
+				renderPasswordPrompt();
+				await getPassword();
                 const encryptedData = await encryptData(JSON.stringify(clipper), password);
                 downloadToFile(encryptedData, clipper.savedFileName, 'application/txt');
                 }
@@ -183,10 +185,30 @@
                 }
             }
         }
-        
+		function renderPasswordPrompt(){
+		 document.getElementById('passwordpop').setAttribute('style', 'display:block');
+		}
+		
+		function getPassword() {
+		  return new Promise(acc => {
+			function handleClick() {
+			  document.getElementById('passwordyes').removeEventListener('click', handleClick);
+			  acc();
+			}
+			 document.getElementById('passwordyes').addEventListener('click', handleClick);
+		  });
+		}
+
+		function setPassword(){
+		 password = document.getElementById('password').value;
         function importClippyModal(j) {
+			isImFilepassProtected = j;
+			if(isImFilepassProtected ==1)
+			{
+			renderPasswordPrompt();
+			}
             createModal();
-            isImFilepassProtected = j;
+            
             document.getElementById("modalHeaderSpan").innerHTML = "Import Clippy";
             document.getElementById("modalIndex").innerText = '';
             let importElement = document.createElement("importClippy");
@@ -210,7 +232,7 @@
                 let a = document.createElement("a"),
                     url = URL.createObjectURL(file);
                 a.href = url;
-                a.download = filename+clipFileExtension; //'.json';
+                a.download = filename; //'.json';
                 document.body.appendChild(a);
                 a.click();
                 setTimeout(function() {
@@ -226,10 +248,10 @@
             }
             processClippy(clipper);
         }
-        function importClippy(j) {
+        function importClippy() {
             let timeUpdateRequired = false;
             if(!clippyTextFromImport){
-                alert('Please select the file.')
+                displayAlertPop('Please select the file.');
             }else {
                 console.log("is checked : " +document.getElementById("appendClippy").checked);
                 let appendMode = document.getElementById("appendClippy").checked
@@ -246,12 +268,12 @@
                         }
                     }
                     catch(error){
-                        alert('Not a valid formated json file!');
+                        displayAlertPop('Not a valid formated json file!');
                         destroyModal();
                     }
                 ownerNameTxt = clipper.Owner;
                 updateTimeTxt = clipper.UpdatedOn;
-                savedOnTxt = clipper.savedFileName+clipFileExtension;
+                savedOnTxt = clipper.savedFileName; //+clipFileExtension;
                 saveLocalCopy(timeUpdateRequired);
                 destroyModal();
                 clippyTextFromImport = null;
@@ -267,7 +289,7 @@
             fr = new FileReader();
             fr.onload = function () {
                 if (isImFilepassProtected ==1){
-                    const password = window.prompt("Password");
+                    //const password = window.prompt("Password");
                     const decryptedData = decryptData(fr.result, password);
                     decryptedData.then(data =>{ clippyTextFromImport = data}); 
                 }else{
@@ -443,7 +465,7 @@
                     "            </div>\n" +
                     "            <div id='modalFooter' class='modal-footer'>\n" +
                     "                   <input type='button' id='modalAddBtn' class='modalAddBtn btn' value='Add' onclick='addNewCell()'>\n" +
-                    "                   <input type='button' id='modalSaveBtn' class='modalSaveBtn btn' value='Update' onclick='saveRow()'>\n" +
+                    "                   <input type='button' id='modalSaveBtn' class='modalSaveBtn btn' value='Save' onclick='saveRow()'>\n" +
                     "                   <input type='button' id='modalCancelBtn' class='modalCancelBtn btn' value='Cancel' onclick='destroyModal()'>\n"+
                     "            </div>\n" +
                     "        </div>"
@@ -527,7 +549,7 @@
                 // update aka replace the row on the clipper
                 let nodeId = document.getElementById("reOL").getAttribute("class");
                 let section = clipper.clippy[nodeId.substring(nodeId.indexOf('tr')+2,nodeId.lastIndexOf('s'))].section
-                    section.rows[nodeId.substring(nodeId.lastIndexOf('s')+1,nodeId.lastIndexOf('r'))].row = row;
+                section.rows[nodeId.substring(nodeId.lastIndexOf('s')+1,nodeId.lastIndexOf('r'))].row = row;
                 destroyModal();
                 renderClipboard(false);
             }
@@ -568,25 +590,57 @@
         </script>
     </div>
     <script>
-        function promptOwnerName(){
+		function updateMetaPop(str)
+		{
+		 document.getElementById('metapop').setAttribute('style','display:block');
+		 document.getElementById('metaLabel').innerHTML = str.valueOf();
+		 return new Promise(acc => {
+			function handleClick() {
+			  document.getElementById('metapop').setAttribute('style','display:none');
+			  acc();
+			}
+			document.getElementById('metaok').addEventListener('click', handleClick);
+		  });
+		 
+		}
+		
+		function displayAlertPop(str)
+		{
+		 document.getElementById('alertpop').setAttribute('style','display:block');
+		 document.getElementById('alertLabel').innerHTML = str.valueOf();
+
+		 return new Promise(acc => {
+			function handleClick() {
+			  document.getElementById('alertpop').setAttribute('style','display:none');
+			  acc();
+			}
+			  document.getElementById('alertok').addEventListener('click', handleClick);
+		  });
+		 
+		}
+        async function promptOwnerName(){
             if(clipper != null){
-                let oName = prompt("Please update the Owner: ", ownerNameTxt !=null ? ownerNameTxt : '');
-                ownerNameTxt = oName.trim()
-                clipper.Owner = String(oName);
+			    document.getElementById('metaInput').value = ownerNameTxt;
+				await updateMetaPop('Please update the Owner: ');
+                ownerNameTxt =  document.getElementById('metaInput').value;
+                clipper.Owner = String(ownerNameTxt);
                 updateClippyMeta();
             }else {
-                alert('Please initialized the clippy first.')
+                displayAlertPop('Please initialized the clippy first.');
             }
         }
         
-        function promptFileName(){
+        async function promptFileName(){
             if(clipper != null){
-                let fName = prompt("Please update the file name: ", savedOnTxt !=null ? savedOnTxt : '');
-                savedOnTxt = fName.trim();
+				document.getElementById('metaInput').value = savedOnTxt.replace(clipFileExtension,'');
+				document.getElementById('metaLabel2').innerHTML = clipFileExtension;
+				await updateMetaPop('Please update the clippy filename: ');
+				document.getElementById('metaLabel2').innerHTML = '';
+                savedOnTxt =  document.getElementById('metaInput').value +clipFileExtension;
                 clipper.savedFileName = String(savedOnTxt);
                 updateClippyMeta();
             }else {
-                alert('Please initialized the clippy first.')
+                displayAlertPop('Please initialized the clippy first.');
             }
         }
         function updateClippyMeta(){
@@ -679,19 +733,48 @@
         </p>
     </div>
     <div id="ynpopupImport">
-        <p>Do you want to export as password protected file?</p>
+        <p>Do you want to import a password protected/encripted file?</p>
         <p><button class="btn">
-                <a onclick="importClippyModal(1); document.getElementById('ynpopupImport').style.display = 'none';">
+                <a onclick="importClippyModal(1); document.getElementById('ynpopupImport').setAttribute('style','display : none');">
                     Yes
                 </a>
             </button>
             <button class="btn">
-                <a onclick="importClippyModal(0); document.getElementById('ynpopupImport').style.display = 'none';">
+                <a onclick="importClippyModal(0); document.getElementById('ynpopupImport').setAttribute('style','display : none');">
                     No
                 </a>
             </button>
         </p>
     </div>
+	<div id="passwordpop">
+        <p>Please enter the password to encryption/decryption?</p>
+		<input type="text" id="password" value="password" />
+        <p><button class="btn">
+                <a id="passwordyes" onclick="setPassword(); document.getElementById('passwordpop').style.display = 'none';">
+                    Yes
+                </a>
+            </button>
+            <button class="btn">
+                <a id="passwordno" onclick="destroyModal(); document.getElementById('passwordpop').style.display = 'none';">
+                    No
+                </a>
+            </button>
+        </p>
+    </div>
+	<div id='metapop'>
+		<label id='metaLabel'></label>
+		<input type='text' id='metaInput' value='' />
+		<label id='metaLabel2'></label>
+		<button class='btn'>
+			<a id='metaok' >Ok</a>
+		</button>
+	</div>
+	<div id='alertpop'>
+		<label id='alertLabel'></label>
+		<button class='btn'>
+			<a id='alertok' >Ok</a>
+		</button>
+	</div>
 
 </div>
 </body>
