@@ -399,6 +399,7 @@
                     "  <option value='text'>Text</option>\n" +
                     "  <option value='password'>Password</option>\n" +
                     "  <option value='textarea'>Text Area</option>\n" +
+                    "  <option value='href'>Hyper Link</option>\n" +
                     "</select>"+
                     "<button class='cellDeleteBtn' onclick='deleteNode(\""+`${liId}`+"\")'><i class='fa fa-trash' style='color: darkred'></i> </button>" +
                     "</li>\n"
@@ -563,6 +564,7 @@
                     "  <option value='text'>Text</option>\n" +
                     "  <option value='password'>Password</option>\n" +
                     "  <option value='textarea'>Text Area</option>\n" +
+                    "  <option value='href'>Hyper Link</option>\n" +
                     "</select>"+
                     "<button class='cellDeleteBtn' onclick='deleteNode(\"reli"+document.getElementById('reOL').childElementCount+"\")'><i class='fa fa-trash' style='color: darkred'></i></button>" ;
 
@@ -710,6 +712,11 @@
                 let cellNode ;
                 if (item.cell_type == 'label') {
                     cellNode = `<label id="r${rindex}c${item.cell_index}" onClick="copyToClipBoard('r${rindex}c${item.cell_index}')";>${item.cell_value}</label>`;
+                }else if (item.cell_type == 'href') {
+                    cellNode = `<label id="r${rindex}c${item.cell_index}" onClick="copyToClipBoard('r${rindex}c${item.cell_index}');";>${item.cell_value}</label> &nbsp;
+                                <a href="${item.cell_value}" target="_blank">
+                                    <i class="fa fa-external-link-square-alt" aria-hidden="true"></i>
+                                </a>`;
                 }else if(item.cell_type == 'textarea') {
                     cellNode =` <textarea id="r${rindex}c${item.cell_index}" onClick="copyToClipBoard('r${rindex}c${item.cell_index}')"; rows="1">${item.cell_value}</textarea>`;
                 } else {
